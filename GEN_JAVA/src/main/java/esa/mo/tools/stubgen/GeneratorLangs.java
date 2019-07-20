@@ -1398,10 +1398,6 @@ public abstract class GeneratorLangs extends GeneratorBase
       {
         String opArgs = createAdapterMethodsArgs(op.getArgTypes(), "body", false, true);
         String opResp = delegateCall + op.getName() + "(" + opArgs + "interaction)";
-        if ((1 == op.getRetTypes().size()) && (op.getRetTypes().get(0).isNativeType()))
-        {
-          opResp = "new " + getConfig().getAreaPackage(StdStrings.MAL) + "mal." + getConfig().getStructureFolder() + "." + StdStrings.UNION + "(" + opResp + ")";
-        }
         ns = convertToNamespace(helperName + "._" + op.getName().toUpperCase() + "_OP_NUMBER:");
         method.addMethodWithDependencyStatement("  case " + ns, ns, false);
         createRequestResponseDecompose(method, op, opResp, createReturnType(file, area, service, op.getName(), "Response", op.getRetTypes()));
@@ -1471,7 +1467,18 @@ public abstract class GeneratorLangs extends GeneratorBase
     {
       if (1 == targetTypes.size())
       {
-        method.addMethodStatement(createMethodCall("    interaction.sendResponse(" + opCall + ")"));
+        if ((op.getRetTypes().get(0).isNativeType()))
+        {
+          String arg = op.getName() + "Rt";
+          method.addMethodStatement("    " + opRetType.getTypeName() + " " + arg + " = " + opCall);
+          StringBuilder buf = new StringBuilder();
+          buf.append("(").append(arg).append(" == null) ? null : new ").append(getConfig().getAreaPackage(StdStrings.MAL)).append("mal.").append(getConfig().getStructureFolder()).append(".").append(StdStrings.UNION).append("(").append(arg).append(")");
+          method.addMethodStatement(createMethodCall("    interaction.sendResponse(" + buf.toString() + ")"));
+        }
+        else
+        {
+          method.addMethodStatement(createMethodCall("    interaction.sendResponse(" + opCall + ")"));
+        }
       }
       else
       {
@@ -1882,6 +1889,7 @@ public abstract class GeneratorLangs extends GeneratorBase
   protected void createEnumerationClass(File folder, AreaType area, ServiceType service, EnumerationType enumeration) throws IOException
   {
     String enumName = enumeration.getName();
+    long enumSize = enumeration.getItem().size();
 
     getLog().info("Creating enumeration class " + enumName);
 
@@ -1909,7 +1917,7 @@ public abstract class GeneratorLangs extends GeneratorBase
 
     // create attributes
     String highestIndex = "";
-    for (int i = 0; i < enumeration.getItem().size(); i++)
+    for (int i = 0; i < enumSize; i++)
     {
       Item item = enumeration.getItem().get(i);
       String value = item.getValue();
@@ -1927,7 +1935,7 @@ public abstract class GeneratorLangs extends GeneratorBase
     List<String> opStr = new LinkedList<String>();
     List<String> stStr = new LinkedList<String>();
     List<String> vaStr = new LinkedList<String>();
-    for (int i = 0; i < enumeration.getItem().size(); i++)
+    for (int i = 0; i < enumSize; i++)
     {
       opStr.add(enumeration.getItem().get(i).getValue());
       stStr.add("\"" + enumeration.getItem().get(i).getValue() + "\"");
@@ -1996,7 +2004,7 @@ public abstract class GeneratorLangs extends GeneratorBase
 
     CompositeField nvType = createCompositeElementsDetails(file, false, "value", TypeUtils.createTypeReference(StdStrings.MAL, null, StdStrings.UINTEGER, false), true, false, "value The numeric value to search for.");
     method = file.addMethodOpenStatement(false, false, false, true, StdStrings.PUBLIC, false, false, enumType, "fromNumericValue", Arrays.asList(nvType), null, "Returns the enumeration element represented by the supplied numeric value, or null if not matched.", "The matched enumeration value, or null if not matched.", null);
-    method.addMethodStatement("for (int i = 0; i < " + highestIndex + "; i++)", false);
+    method.addMethodStatement("for (int i = 0; i < _ENUMERATION_NUMERIC_VALUES.length; i++)", false);
     method.addMethodStatement("{", false);
     method.addMethodStatement("  if (" + getEnumValueCompare("_ENUMERATION_NUMERIC_VALUES[i]", "value") + ")", false);
     method.addMethodStatement("  {", false);
@@ -2005,17 +2013,6 @@ public abstract class GeneratorLangs extends GeneratorBase
     method.addMethodStatement("}", false);
     method.addMethodStatement("return " + getNullValue());
     method.addMethodCloseStatement();
-
-    method = file.addMethodOpenStatement(false, false, StdStrings.PUBLIC, false, true, uintType, "getNumericValue", null, null, "Returns the numeric value of the enumeration element.", "The numeric value", null);
-    method.addArrayMethodStatement("_ENUMERATION_NUMERIC_VALUES", "ordinal", highestIndex);
-    method.addMethodCloseStatement();
-
-    method = file.addMethodOpenStatement(false, false, StdStrings.PUBLIC, false, false, elementType, "createElement", null, null, "Returns an instance of this type using the first element of the enumeration. It is a generic factory method but just returns an existing element of the enumeration as new values of enumerations cannot be created at runtime.", "The first element of the enumeration.", null);
-    method.addMethodStatement("return _ENUMERATIONS[0]");
-    method.addMethodCloseStatement();
-
-    // create encode method
-    long enumSize = enumeration.getItem().size();
 
     String enumOrdinalType = StdStrings.UINTEGER;
     if (enumSize < 256)
@@ -2029,6 +2026,24 @@ public abstract class GeneratorLangs extends GeneratorBase
 
     String enumEncoderValue = getEnumEncoderValue(enumSize);
     String enumDecoderValue = getEnumDecoderValue(enumSize);
+
+    if (enumSize < 256)
+    {
+      CompositeField encodedType = createCompositeElementsDetails(file, false, "return", TypeUtils.createTypeReference(StdStrings.MAL, null, StdStrings.UOCTET, false), true, true, null);
+      method = file.addMethodOpenStatement(false, false, StdStrings.PUBLIC, false, false, encodedType, "getOrdinalUOctet", null, null, "Returns the index of the enumerated item as a {@code UOctet}.", "the index of the enumerated item as a {@code UOctet}.", null);
+      method.addMethodStatement("return " + enumEncoderValue);
+      method.addMethodCloseStatement();
+    }
+
+    method = file.addMethodOpenStatement(false, false, StdStrings.PUBLIC, false, true, uintType, "getNumericValue", null, null, "Returns the numeric value of the enumeration element.", "The numeric value", null);
+    method.addArrayMethodStatement("_ENUMERATION_NUMERIC_VALUES", "ordinal", highestIndex);
+    method.addMethodCloseStatement();
+
+    method = file.addMethodOpenStatement(false, false, StdStrings.PUBLIC, false, false, elementType, "createElement", null, null, "Returns an instance of this type using the first element of the enumeration. It is a generic factory method but just returns an existing element of the enumeration as new values of enumerations cannot be created at runtime.", "The first element of the enumeration.", null);
+    method.addMethodStatement("return _ENUMERATIONS[0]");
+    method.addMethodCloseStatement();
+
+    // create encode method
     method = encodeMethodOpen(file);
     method.addMethodStatement(createMethodCall("encoder.encode") + enumOrdinalType + "(" + enumEncoderValue + ")");
     method.addMethodCloseStatement();
